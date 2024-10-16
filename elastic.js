@@ -4,8 +4,8 @@ const { Client } = require('@elastic/elasticsearch');
 const winrm = require('nodejs-winrm');
 
 // ElasticSearch credentials
-const ELK_USER = 'elastic'; // Replace with your actual username
-const ELK_PASSWORD = '2HsejWbPb*wV6fF8eqtf'; // Replace with your actual password
+const ELK_USER = ''; // Replace with your actual username
+const ELK_PASSWORD = ''; // Replace with your actual password
 
 // Initialize Elasticsearch client
 const client = new Client({
