@@ -4,25 +4,19 @@ const { Client } = require('@elastic/elasticsearch');
 const winrm = require('nodejs-winrm');
 
 // ElasticSearch credentials
-const ELK_USER = ''; // Replace with your actual username
-const ELK_PASSWORD = ''; // Replace with your actual password
+const ELK_USER = '';
+const ELK_PASSWORD = '';
 
-// Initialize Elasticsearch client
 const client = new Client({
-    node: 'https://elastic.spooledup.co.uk/', // Replace with your ELK server URL if different
+    node: 'https://elastic.spooledup.co.uk/',
     auth: {
         username: ELK_USER,
         password: ELK_PASSWORD
     }
 });
 
-// Function to introduce a delay
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 // Function to search ELK for alerts
-async function searchElkForHost(hostName, startTime) {
+async function searchElkForHost(hostName, startTime, endTime) {
     try {
         const response = await client.search({
             index: '.alerts-security.alerts-default',
@@ -30,25 +24,13 @@ async function searchElkForHost(hostName, startTime) {
                 query: {
                     bool: {
                         must: [
-                            {
-                                match: {
-                                    'host.name': hostName
-                                }
-                            },
-                            {
-                                range: {
-                                    '@timestamp': {
-                                        gte: startTime, // Use the start time to filter
-                                        lte: 'now',
-                                        format: 'strict_date_optional_time'
-                                    }
-                                }
-                            }
+                            { match: { 'host.name': hostName } },
+                            { range: { '@timestamp': { gte: startTime, lte: endTime, format: 'strict_date_optional_time' } } }
                         ]
                     }
                 }
             },
-            size: 1000 // Adjust based on expected number of alerts
+            size: 1000
         });
 
         return response;
@@ -58,13 +40,15 @@ async function searchElkForHost(hostName, startTime) {
     }
 }
 
-// Function to run Atomic Red Team test via WinRM
+// Delay function
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Function to run Atomic Red Team test
 async function runAtomicTest(params, techniqueId, testNumber) {
     try {
-        // Construct command to run the Atomic Test with module import
         const command = `powershell -Command "Import-Module 'C:\\AtomicRedTeam\\invoke-atomicredteam\\Invoke-AtomicRedTeam.psd1' -Force; Invoke-AtomicTest '${techniqueId}' -TestNumbers ${testNumber}"`;
-
-        // Execute Command
         params['command'] = command;
         params['commandId'] = await winrm.command.doExecuteCommand(params);
         const output = await winrm.command.doReceiveOutput(params);
@@ -76,13 +60,110 @@ async function runAtomicTest(params, techniqueId, testNumber) {
     }
 }
 
-// Function to parse the CSV and compare Atomic Red Team tests with ELK detections
+// Log test results to a file with structured test numbers
+async function writeResultsToFile(results) {
+    try {
+        let existingResults = {};
+        const filePath = './test_results.json';
+
+        if (fs.existsSync(filePath)) {
+            const data = fs.readFileSync(filePath, 'utf8');
+            try {
+                existingResults = JSON.parse(data);
+            } catch (err) {
+                console.error('Error parsing existing JSON data. Initializing with an empty object.', err);
+                existingResults = {};
+            }
+        }
+
+        // Iterate over new results and update or add to the existing structure
+        Object.keys(results).forEach(techniqueId => {
+            // If the technique already exists, add the new test data under the specific testNumber
+            if (existingResults[techniqueId]) {
+                const newTestNumber = results[techniqueId].testNumber;
+
+                if (!existingResults[techniqueId].tests) {
+                    existingResults[techniqueId].tests = {};
+                }
+
+                // Add or update the test data for the specific testNumber
+                existingResults[techniqueId].tests[newTestNumber] = {
+                    alerts: results[techniqueId].alerts,
+                    techniques: results[techniqueId].techniques,
+                    passed: results[techniqueId].passed
+                };
+            } else {
+                // If the technique doesn't exist, initialize the structure with the test
+                existingResults[techniqueId] = {
+                    techniqueId: techniqueId,
+                    tests: {
+                        [results[techniqueId].testNumber]: {
+                            alerts: results[techniqueId].alerts,
+                            techniques: results[techniqueId].techniques,
+                            passed: results[techniqueId].passed
+                        }
+                    }
+                };
+            }
+        });
+
+        // Write the updated results back to the file
+        fs.writeFileSync(filePath, JSON.stringify(existingResults, null, 2));
+    } catch (error) {
+        console.error('Error writing results to file:', error);
+    }
+}
+
+// Function to group alerts and techniques in the desired format
+function groupAlertsAndTechniques(elkResults) {
+    const alertIds = [];
+    const techniques = [];
+
+    elkResults.hits.hits.forEach(hit => {
+        const alertId = hit._id;
+        const threat = hit._source.threat;
+
+        // Add alert ID to the array
+        alertIds.push(alertId);
+
+        // Add techniques and tactics to the techniques array
+        if (threat && Array.isArray(threat)) {
+            threat.forEach(thr => {
+                const tacticName = thr.tactic.name;
+
+                thr.technique.forEach(tech => {
+                    techniques.push({
+                        id: tech.id,
+                        name: tech.name,
+                        tactic: tacticName
+                    });
+
+                    if (tech.subtechnique && Array.isArray(tech.subtechnique)) {
+                        tech.subtechnique.forEach(subtech => {
+                            techniques.push({
+                                id: subtech.id,
+                                name: subtech.name,
+                                tactic: tacticName
+                            });
+                        });
+                    }
+                });
+            });
+        }
+    });
+
+    return {
+        alerts: alertIds, // Array of alert IDs
+        techniques: techniques // Array of techniques and their corresponding tactics
+    };
+}
+
+// Compare Atomic tests with ELK alerts and handle detection
 async function compareAtomicTestsWithElk(hostName) {
     const atomicTests = [];
-    const startTime = new Date().toISOString(); // Capture start time
+    const startTime = new Date().toISOString(); // Get current time for alerts
 
-    // Read the CSV file and populate atomicTests array
-    fs.createReadStream('./windows-index.csv') // Update with the actual path to your CSV
+    fs.createReadStream('./windows-index.csv')
         .pipe(csv())
         .on('data', (row) => {
             atomicTests.push(row);
@@ -90,51 +171,65 @@ async function compareAtomicTestsWithElk(hostName) {
         .on('end', async () => {
             console.log('CSV file successfully processed');
 
-            // Create WinRM client parameters
             const params = {
-                host: '192.168.68.52', // Your Windows host
-                port: 5985, // Default WinRM HTTP port (or 5986 for HTTPS)
+                host: '192.168.68.52',
+                port: 5985,
                 path: '/wsman',
                 auth: 'Basic ' + Buffer.from('Vagrant:vagrant').toString('base64')
             };
 
-            // Get the Shell ID
             params['shellId'] = await winrm.shell.doCreateShell(params);
 
             for (const { 'Technique #': techniqueId, 'Test #': testNumber } of atomicTests) {
                 console.log(`Running Atomic Test for technique: ${techniqueId}`);
 
-                try {
-                    // Run the Atomic test via WinRM
-                    await runAtomicTest(params, techniqueId, testNumber);
+                const results = {
+                    [techniqueId]: {
+                        techniqueId: techniqueId,
+                        testNumber: testNumber,
+                        alerts: [], // All unique alert IDs
+                        techniques: [], // All unique techniques and tactics combinations
+                        passed: false
+                    }
+                };
 
-                    // Polling for alerts in ELK
+                try {
+                    const output = await runAtomicTest(params, techniqueId, testNumber);
+
+                    console.log(`Output for Test ${testNumber} under Technique ${techniqueId}:\n${output}`);
+
                     const pollInterval = 30000; // 30 seconds
-                    const maxWaitTime = 900000; // 15 minutes
+                    const maxWaitTime = 180000; // 3 minutes
                     let waitedTime = 0;
+
+                    const endTime = new Date(Date.now() + maxWaitTime).toISOString();
 
                     while (waitedTime < maxWaitTime) {
                         console.log('Waiting for alerts to propagate to ELK...');
                         await delay(pollInterval);
                         waitedTime += pollInterval;
 
-                        // After waiting, search for detections in ELK
-                        const elkResults = await searchElkForHost(hostName, startTime);
-                        console.log(JSON.stringify(elkResults, null, 2)); // Log the entire response for debugging
+                        const elkResults = await searchElkForHost(hostName, startTime, endTime);
 
-                        // Check if any alert corresponds to the specific technique
-                        const detectedAlerts = elkResults.hits.hits.filter(hit => 
-                            hit._source && 
-                            hit._source.event && 
-                            hit._source.event.action && 
+                        const groupedData = groupAlertsAndTechniques(elkResults);
+
+                        results[techniqueId].alerts = groupedData.alerts; // Array of alert IDs
+                        results[techniqueId].techniques = groupedData.techniques; // Array of techniques and tactics
+
+                        // Check if full detection (matching technique ID) occurred
+                        const detectedAlerts = elkResults.hits.hits.filter(hit =>
+                            hit._source &&
+                            hit._source.event &&
+                            hit._source.event.action &&
                             hit._source.event.action.includes(techniqueId)
                         );
 
                         if (detectedAlerts.length > 0) {
-                            console.log(`ALERT DETECTED for technique ${techniqueId}: ${detectedAlerts.length} event(s) found for host: ${hostName}`);
-                            break; // Exit the polling loop
+                            console.log(`✅ FULL DETECTION: ${detectedAlerts.length} event(s) found for technique ${techniqueId} on host: ${hostName}`);
+                            results[techniqueId].passed = true; // Mark as passed
+                            break; // Exit the loop once detection occurs
                         } else {
-                            console.log(`No events detected in ELK for technique ${techniqueId} on host: ${hostName}`);
+                            console.log(`❌ No technique-based events detected for ${techniqueId} on host: ${hostName}`);
                         }
                     }
 
@@ -144,14 +239,15 @@ async function compareAtomicTestsWithElk(hostName) {
                 } catch (error) {
                     console.error(`Error during comparison for technique ${techniqueId}:`, error);
                 }
+
+                // Write results to JSON file after each test
+                await writeResultsToFile(results);
             }
 
-            // Close the Shell
             await winrm.shell.doDeleteShell(params);
         });
 }
 
-// Example host name to test
-const testHostName = 'kingslanding'; // Replace with your actual target host
+const testHostName = 'kingslanding'; // Replace with your host name
 
 compareAtomicTestsWithElk(testHostName);
