@@ -223,7 +223,7 @@ async function compareAtomicTestsWithElk(hostName) {
                             hit._source.event.action &&
                             hit._source.event.action.includes(techniqueId)
                         );
-
+                        //true, false logic is currently flawed and not working correctly, to be reviewed later
                         if (detectedAlerts.length > 0) {
                             console.log(`✅ FULL DETECTION: ${detectedAlerts.length} event(s) found for technique ${techniqueId} on host: ${hostName}`);
                             results[techniqueId].passed = true; // Mark as passed
