@@ -6,11 +6,11 @@ import csv
 
 # static values
 #s1 api 
-CONSOLEURL = "https://[s1_tenent].sentinelone.net/" # Example: https://your.console.net
+CONSOLEURL = "https://your.console.net/" # Example: https://your.console.net
 APITOKEN = "" #S1 API Token
 APIREQUEST = "/web/api/v2.1/threats" # The URL of the call. See the API documentation
 LIMIT = "1" # If required, change the limit of returned data. Max is 1000.
-hostname="device_uuid" #currently using uuid rather than hostname
+hostname="f6c0ac62cca14ede91413c8c4551ebd4" #currently using uuid rather than hostname
 
 #winrm
 hostip = '1.1.1.1'
@@ -29,7 +29,7 @@ password = 'password123'
 
 def atomic_indexer():
     atomic_tests =[]
-    with open('./windows-index.csv', mode='r', newline='') as tests: #uses this atomic red test csv https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/Indexes/Indexes-CSV/windows-index.csv
+    with open('./windows-index.csv', mode='r', newline='') as tests:
         reader = csv.DictReader(tests)
         for row in reader:
             atomic_tests.append(row)
@@ -39,7 +39,7 @@ def atomic_detination(hostip, domain, user, password, techniqueId, testNumber): 
     p = Protocol(
         endpoint='https://{hostip}:5986/wsman',
         transport='ntlm',
-        username=r'{domain}\{user}',
+        username=user',
         password='{password}',
         server_cert_validation='ignore')
 
