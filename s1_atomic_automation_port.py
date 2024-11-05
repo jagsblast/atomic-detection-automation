@@ -80,87 +80,106 @@ def pull_s1_alert(CONSOLEURL, APITOKEN, APIREQUEST, hostname, detination_timesta
 
 def json_magic(techniqueId, testNumber, data):
     if data is None:
-    print("No data received from SentinelOne alert.")
-    continue
-    indicators = data['data'][0]['indicators']
-    agentRealtimeInfo = data['data'][0]['agentRealtimeInfo']
-    threatInfo = data['data'][0]['threatInfo']
-    mitigationStatus = data['data'][0]['mitigationStatus']
-    # could be worth moving this into a 3d dict 
-    categorys = []
-    tactics_name = []
-    techniques1 = []
-    links = []  
+        print("No data received from SentinelOne alert.")
+        return
+    
+    try:
+        # Ensure 'data' key exists and contains at least one element
+        if 'data' not in data or len(data['data']) == 0:
+            print("Data format is incorrect or empty. Expected 'data' key with at least one entry.")
+            return
+        
+        # Extract nested information with default empty values if keys are missing
+        indicators = data['data'][0].get('indicators', [])
+        agentRealtimeInfo = data['data'][0].get('agentRealtimeInfo', {})
+        threatInfo = data['data'][0].get('threatInfo', {})
+        mitigationStatus = data['data'][0].get('mitigationStatus', [])
 
-    #pull indicator properties 
-    for indicator in indicators:
-        if (indicator['category'] not in categorys):
-            categorys.append(indicator['category'])
-        for tactics in indicator['tactics']:
-            if (tactics['name'] not in tactics_name):
-                tactics_name.append(tactics['name'])
-            for technique in tactics['techniques']:
-                if (technique['name'] not in techniques1):
-                    techniques1.append(technique['name'])
-                if (technique['link'] not in links):
-                    links.append(technique['link'])
+        categorys = []
+        tactics_name = []
+        techniques1 = []
+        links = []
 
-    agentInfo = {
-        "computer_name": agentRealtimeInfo['agentComputerName'],
-        "agentOsName": agentRealtimeInfo['agentOsName'],
-        "agentUuid": agentRealtimeInfo['agentUuid']
-    }
-    # print(agentInfo)
+        # Pull indicator properties
+        for indicator in indicators:
+            if indicator.get('category') and indicator['category'] not in categorys:
+                categorys.append(indicator['category'])
+            for tactics in indicator.get('tactics', []):
+                if tactics.get('name') and tactics['name'] not in tactics_name:
+                    tactics_name.append(tactics['name'])
+                for technique in tactics.get('techniques', []):
+                    if technique.get('name') and technique['name'] not in techniques1:
+                        techniques1.append(technique['name'])
+                    if technique.get('link') and technique['link'] not in links:
+                        links.append(technique['link'])
 
-
-    detected = False
-    if (techniqueId in techniques1):
-        detected=True
-        # print("true")
-
-
-    #pulls mitigation data
-    mitigations = dict(action=[])
-    for e in mitigationStatus:
-        actions_entry={
-            e['action']:{
-            'failed': e['actionsCounters']['failed'],
-            'success': e['actionsCounters']['success'],
-            'status': e['status']
-            }
+        # Extract agent info with default empty values for missing keys
+        agentInfo = {
+            "computer_name": agentRealtimeInfo.get('agentComputerName', 'N/A'),
+            "agentOsName": agentRealtimeInfo.get('agentOsName', 'N/A'),
+            "agentUuid": agentRealtimeInfo.get('agentUuid', 'N/A')
         }
-        mitigations['action'].append(actions_entry)
+        print(agentInfo)  # Debugging information, if necessary
 
+        # Check if the technique is detected
+        detected = techniqueId in techniques1
 
-    #pulls S1_threatInfo from data
-    s1_threatInfo={
-    "s1_threatName": threatInfo['threatName'],
-    "s1_classification": threatInfo['classification'],
-    "s1_detectionType": threatInfo['detectionType'],
-    "s1_engines": threatInfo['engines'],
-    "mitigatedPreemptively": threatInfo['mitigatedPreemptively'],
-    "mitigationStatus": threatInfo['mitigationStatus']
-    }
+        # Pull mitigation data with checks for nested keys
+        mitigations = dict(action=[])
+        for e in mitigationStatus:
+            action = e.get('action')
+            actionsCounters = e.get('actionsCounters', {})
+            if action:
+                actions_entry = {
+                    action: {
+                        'failed': actionsCounters.get('failed', 0),
+                        'success': actionsCounters.get('success', 0),
+                        'status': e.get('status', 'unknown')
+                    }
+                }
+                mitigations['action'].append(actions_entry)
 
-    #pulls techniques_detected from data
+        # Pull threat info with fallback for missing data
+        s1_threatInfo = {
+            "s1_threatName": threatInfo.get('threatName', 'Unknown'),
+            "s1_classification": threatInfo.get('classification', 'Unknown'),
+            "s1_detectionType": threatInfo.get('detectionType', 'Unknown'),
+            "s1_engines": threatInfo.get('engines', []),
+            "mitigatedPreemptively": threatInfo.get('mitigatedPreemptively', False),
+            "mitigationStatus": threatInfo.get('mitigationStatus', 'Unknown')
+        }
 
-    techniques_detected ={
-        "test number" : testNumber,
-        "techniques_detected" : techniques1,
-        "categorys__detected" : categorys,
-        "tactic_name_detected" : tactics_name,
-        "tactic_links" : links,
-        "detection_match" : detected,
-    }
+        # Construct detected techniques
+        techniques_detected = {
+            "test number": testNumber,
+            "techniques_detected": techniques1,
+            "categorys__detected": categorys,
+            "tactic_name_detected": tactics_name,
+            "tactic_links": links,
+            "detection_match": detected,
+        }
 
-    results = {
-        techniqueId :[{
-        "alertID": data['data'][0]['id'],
-        "techniques_detected" : techniques_detected,
-        "S1_threatInfo": s1_threatInfo,
-        "mitigations": mitigations,
-        }]
-    }
+        # Final result structure
+        results = {
+            techniqueId: [{
+                "alertID": data['data'][0].get('id', 'Unknown'),
+                "techniques_detected": techniques_detected,
+                "S1_threatInfo": s1_threatInfo,
+                "mitigations": mitigations,
+            }]
+        }
+
+        # Serialize and write to file with error handling
+        results1 = json.dumps(results, indent=4)
+        with open("results.json", "w") as outfile:
+            outfile.write(results1)
+
+    except KeyError as e:
+        print(f"Key error: {e} - data structure might have unexpected format.")
+    except (IOError, OSError) as e:
+        print(f"File write error: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
 
     results1=(json.dumps(results, indent=4))
     with open("results.json", "w") as outfile:
