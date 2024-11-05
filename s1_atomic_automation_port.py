@@ -3,6 +3,8 @@ import json
 import requests
 import datetime
 import csv
+from winrm.protocol import Protocol
+
 
 # static values
 #s1 api 
@@ -37,17 +39,17 @@ def atomic_indexer():
 
 def atomic_detination(hostip, domain, user, password, techniqueId, testNumber): #untested
     p = Protocol(
-        endpoint='https://{hostip}:5986/wsman',
+        endpoint=f'https://{hostip}:5986/wsman',
         transport='ntlm',
-        username=user',
-        password='{password}',
+        username=f'{user}',
+        password=f'{password}',
         server_cert_validation='ignore')
 
     ct = datetime.datetime.now()
     detination_timestamp = ct.strftime("%Y-%m-%dT%X.%fZ")
 
     shell_id = p.open_shell()
-    command="powershell -Command Import-Module 'C:\\AtomicRedTeam\\invoke-atomicredteam\\Invoke-AtomicRedTeam.psd1' -Force; Invoke-AtomicTest '${techniqueId}' -TestNumbers ${testNumber}'"
+    command = f"powershell -Command Import-Module 'C:\\AtomicRedTeam\\invoke-atomicredteam\\Invoke-AtomicRedTeam.psd1' -Force; Invoke-AtomicTest '{techniqueId}' -TestNumbers {testNumber}"
     
     command_id = p.run_command(shell_id, command)
     std_out, std_err, status_code = p.get_command_output(shell_id, command_id)
@@ -63,15 +65,23 @@ def pull_s1_alert(CONSOLEURL, APITOKEN, APIREQUEST, hostname, detination_timesta
     "Content-type": "application/json",
     "Authorization": "APIToken " + APITOKEN
     }
-    #sent the request
-    response = requests.get(CONSOLEURL + APIREQUEST + "?limit=" + LIMIT + "&uuid__contains=" + hostname +"&createdAt__gte=" + detination_timestamp, headers=headers)
-    #format the response
-    agents = response.json()
-    formated = json.dumps(agents, indent=4)
-
+    try:
+        response = requests.get(...)
+        response.raise_for_status()  # Raises an error for bad HTTP responses
+        agents = response.json()
+        formated = json.dumps(agents, indent=4)
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON: {e}")
+        return None
     return(formated)
 
 def json_magic(techniqueId, testNumber, data):
+    if data is None:
+    print("No data received from SentinelOne alert.")
+    continue
     indicators = data['data'][0]['indicators']
     agentRealtimeInfo = data['data'][0]['agentRealtimeInfo']
     threatInfo = data['data'][0]['threatInfo']
